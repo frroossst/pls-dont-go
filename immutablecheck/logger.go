@@ -35,7 +35,9 @@ const (
 
 // function to log things to a .log file for debugging
 func putLog(level logLevel, s string) {
-	return // NOTE: LOGGING DISABLED for RELEASE
+	// NOTE: LOGGING DISABLED for RELEASE
+	_ = os.O_SYNC
+	/*
 	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("Error opening log file:", err)
@@ -66,6 +68,7 @@ func putLog(level logLevel, s string) {
 	if _, err := f.WriteString(line); err != nil {
 		fmt.Println("Error writing to log file:", err)
 	}
+	*/
 }
 
 // format is json like

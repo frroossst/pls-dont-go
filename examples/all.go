@@ -46,6 +46,25 @@ func TestOtherType() {
 	fnPtr2 = succ // CATCH
 }
 
+// create multiple threads to test concurrency (some mutation attempts may be missed otherwise)
+func TestRaceCondition() {
+	im := Immtbl{}
+
+	go func() {
+		im.Num = 2001 // CATCH
+	}()
+
+	go func() {
+		im.Str = "race condition" // CATCH
+	}()
+
+	go func() {
+		im.Map["race"] = 42 // CATCH
+	}()
+
+	select {}
+}
+
 type cell struct {
 	Value int
 }
