@@ -18,9 +18,7 @@ var Analyzer = &analysis.Analyzer{
 	Requires: []*analysis.Analyzer{},
 }
 
-// New returns the analyzer for golangci-lint plugin system
 func New(conf any) ([]*analysis.Analyzer, error) {
-	// conf can contain settings from .golangci.yml if needed
 	return []*analysis.Analyzer{Analyzer}, nil
 }
 
