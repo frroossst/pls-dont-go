@@ -1,4 +1,4 @@
-module github.com/YOUR_USERNAME/pls-dont-go
+module github.com/frroossst/pls-dont-go
 
 go 1.24.0
 
