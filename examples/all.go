@@ -27,9 +27,17 @@ func TestOtherType() {
 	_ = imStr
 	imStr = "world" // CATCH
 
+	// cast to string and mutate
+	var normalStr string = string(imStr)
+	_ = normalStr
+	normalStr = "mutable string" // this is fine cause upto user to cast
+
 	var imMap ImmutalbeMap = ImmutalbeMap{"a": 1, "b": 2, "c": 3}
 	_ = imMap
 	imMap["d"] = 4 // CATCH
+	// cast to normal map and mutate
+	var normalMap map[string]int = map[string]int(imMap)
+	normalMap["e"] = 5 // this is fine cause upto user to cast
 
 	// reinit the map
 	imMap = ImmutalbeMap{"x": 10} // CATCH
@@ -82,6 +90,15 @@ type OuterMutable struct {
 	Inner InnerImmutable
 	Value string
 }
+
+// Interface-based accessors for examples below
+type HasImmutable interface {
+	GetImmutable() *Immtbl
+}
+
+type Holder struct{ i *Immtbl }
+
+func (h *Holder) GetImmutable() *Immtbl { return h.i }
 
 // @immutable
 type Immtbl struct {
@@ -405,5 +422,29 @@ func TestAll() {
 	 */
 	newIm := New()
 	newIm.Num = 1818 // CATCH
+
+	/*
+	 * mutations using interfaces (type assertions, type switches, and interface methods)
+	 */
+	var i1 any = &im
+	i1.(*Immtbl).Num = 1919 // CATCH
+
+	var i2 any = &im
+	switch v := i2.(type) {
+	case *Immtbl:
+		v.Num = 2020 // CATCH
+	}
+
+	var h HasImmutable = &Holder{i: &im}
+	h.GetImmutable().Num = 2121 // CATCH
+
+	mutateViaIface := func(h HasImmutable) {
+		h.GetImmutable().Num = 2222 // CATCH
+	}
+	mutateViaIface(h)
+
+	type NumMutator interface{ RecvMutateNum() }
+	var nm NumMutator = &im
+	nm.RecvMutateNum()
 
 }
