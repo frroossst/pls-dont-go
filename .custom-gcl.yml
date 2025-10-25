@@ -1,0 +1,5 @@
+version: v2.5.0
+plugins:
+    - module: "github.com/frroossst/pls-dont-go"
+      path: .
+      import: "github.com/frroossst/pls-dont-go/immutablecheck"

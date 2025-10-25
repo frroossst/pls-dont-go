@@ -1,0 +1,12 @@
+version: "2"
+
+linters:
+  enable:
+    - immutablecheck
+  settings:
+    custom:
+      immutablecheck:
+        type: "module"
+        description: Immutable type mutation checker (pls-dont-go)
+        # settings: {} # add plugin-specific settings here if needed
+

@@ -1,0 +1,1 @@
+`go install github.com/frroossst/pls-dont-go/cmd/immutablelint@latest`
