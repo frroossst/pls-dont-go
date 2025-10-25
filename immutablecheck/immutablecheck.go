@@ -63,15 +63,15 @@ func run(pass *analysis.Pass) (any, error) {
 	putLog(dbug, Pretty_print_immutables(&immutableTypes))
 	putLog(info, "started tracking copies pass")
 
-	// Track which variables are copies from map/slice access
+	// track which variables are copies from map/slice access
 	for _, file := range pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if assign, ok := n.(*ast.AssignStmt); ok {
 				if assign.Tok == token.DEFINE {
-					// Check if RHS is an index expression (map/slice access)
+					// check if RHS is an index expression (map/slice access)
 					for i, rhs := range assign.Rhs {
 						if _, ok := rhs.(*ast.IndexExpr); ok {
-							// LHS is being assigned from an index - it is mayhaps a copy
+							// lHS is being assigned from an index - it is mayhaps a copy
 							if i < len(assign.Lhs) {
 								if ident, ok := assign.Lhs[i].(*ast.Ident); ok {
 									obj := pass.TypesInfo.ObjectOf(ident)
@@ -249,8 +249,8 @@ func getTypeNameFromTypeRecursive(typ types.Type, immutableTypes map[string]immu
 }
 
 func checkAssignmentWithCopies(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool) {
-	// Skip variable declarations (:= token)
-	// We only care about mutations, not initial assignments
+	// skip variable declarations (:= token)
+	// we only care about mutations, not initial assignments
 	// also like if initial assignments were not allowed then like how do I even code?
 	if stmt.Tok == token.DEFINE {
 		return // := is declaration, not mutation
@@ -264,7 +264,6 @@ func checkAssignmentWithCopies(pass *analysis.Pass, stmt *ast.AssignStmt, immuta
 			// 1. im = Immtbl{} (reassigning whole immutable - should CATCH)
 			// 2. result = &im (assigning pointer - should NOT catch, it's read-only yet)
 			// 3. val = mapOfImmutables["key"] (assigning copy - should also NOT catch)
-
 			if isImmutableVariable(pass, ident, immutableTypes) {
 				// check RHS - if it's just taking address, don't flag (read-only operation)
 				if i < len(stmt.Rhs) {
@@ -280,32 +279,32 @@ func checkAssignmentWithCopies(pass *analysis.Pass, stmt *ast.AssignStmt, immuta
 			continue
 		}
 
-		// Check if LHS is a selector (field access like im.Num or val.Num)
+		// check if LHS is a selector (field access like im.Num or val.Num)
 		if sel, ok := lhs.(*ast.SelectorExpr); ok {
-			// Check if the base is a copied variable
+			// check if the base is a copied variable
 			if base, ok := sel.X.(*ast.Ident); ok {
 				baseObj := pass.TypesInfo.ObjectOf(base)
 				if baseObj != nil && copiedVariables[baseObj] {
-					// This is mutating a copy - skip it
+					// this is mutating a copy - skip it
 					continue
 				}
 			}
 		}
 
-		// For all other LHS patterns, check if it's an immutable mutation
+		// for all other LHS patterns, check if it's an immutable mutation
 		if isImmutableMutation(pass, lhs, immutableTypes) {
-			reportMutation(pass, stmt.Pos(), getExpressionString(lhs), lhs, immutableTypes, "")
+			reportMutation(pass, stmt.Pos(), getExpressionString(lhs), lhs, immutableTypes, "mutating immutable field in assignment")
 		}
 	}
 }
 
 func checkIncDecWithCopies(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool) {
-	// Check if we're incrementing/decrementing a field of a copied variable
+	// check if we're incrementing/decrementing a field of a copied variable
 	if sel, ok := stmt.X.(*ast.SelectorExpr); ok {
 		if base, ok := sel.X.(*ast.Ident); ok {
 			baseObj := pass.TypesInfo.ObjectOf(base)
 			if baseObj != nil && copiedVariables[baseObj] {
-				// This is mutating a copy - skip it
+				// this is mutating a copy - skip it
 				return
 			}
 		}
@@ -410,32 +409,34 @@ func isImmutableMutation(pass *analysis.Pass, expr ast.Expr, immutableTypes map[
 
 	case *ast.UnaryExpr:
 		// Handle unary expressions like &im.Num or *ptr
-		if e.Op == token.AND {
+		switch e.Op {
+		case token.AND:
 			// Taking address: check if we're taking address of immutable field
 			return isImmutableMutation(pass, e.X, immutableTypes)
-		} else if e.Op == token.MUL {
+		case token.MUL:
 			// Dereferencing: check the dereferenced type
 			derefType := pass.TypesInfo.TypeOf(e)
 			if derefType != nil && isImmutableType(derefType, immutableTypes) {
 				return true
 			}
+		default:
+			// do nothing
 		}
 
 	case *ast.Ident:
-		// Direct mutation of immutable variable
+		// direct mutation of immutable variable
 		return isImmutableVariable(pass, e, immutableTypes)
 	}
 	return false
 }
 
-// Helper function to get struct type from a type (handling pointers)
 func getStructType(typ types.Type) (*types.Struct, bool) {
-	// Remove pointer indirection
+	// remove pointer indirection
 	if ptr, ok := typ.(*types.Pointer); ok {
 		typ = ptr.Elem()
 	}
 
-	// Get the underlying struct
+	// get the underlying struct
 	if named, ok := typ.(*types.Named); ok {
 		if structType, ok := named.Underlying().(*types.Struct); ok {
 			return structType, true
@@ -449,14 +450,13 @@ func getStructType(typ types.Type) (*types.Struct, bool) {
 	return nil, false
 }
 
-// Helper function to check if a field comes from an embedded immutable type
 func isFieldFromEmbeddedImmutable(structType *types.Struct, fieldName string, immutableTypes map[string]immutableInfo) bool {
 	for i := 0; i < structType.NumFields(); i++ {
 		field := structType.Field(i)
 		if field.Embedded() {
-			// Check if this embedded field is immutable
+			// check if this embedded field is immutable
 			if isImmutableType(field.Type(), immutableTypes) {
-				// Check if the embedded type has this field
+				// check if the embedded type has this field
 				if embeddedStruct, ok := getStructType(field.Type()); ok {
 					for j := 0; j < embeddedStruct.NumFields(); j++ {
 						if embeddedStruct.Field(j).Name() == fieldName {
@@ -481,7 +481,7 @@ func isImmutableVariable(pass *analysis.Pass, ident *ast.Ident, immutableTypes m
 }
 
 func isImmutableType(typ types.Type, immutableTypes map[string]immutableInfo) bool {
-	// Remove pointer indirection
+	// remove pointer indirection
 	if ptr, ok := typ.(*types.Pointer); ok {
 		typ = ptr.Elem()
 	}
@@ -489,13 +489,14 @@ func isImmutableType(typ types.Type, immutableTypes map[string]immutableInfo) bo
 	// Handle type aliases (Go 1.22+)
 	// For type aliases like: type Alias = Immtbl
 	// The type will be *types.Alias, and we need to resolve it to the actual type
+	// Type aliases in go are "transparent", so we need to get the Rhs type
 	if alias, ok := typ.(interface{ Rhs() types.Type }); ok {
-		// Get the right-hand side of the alias (the actual type)
+		// get the right-hand side of the alias (the actual type)
 		actualType := alias.Rhs()
 		return isImmutableType(actualType, immutableTypes)
 	}
 
-	// Check if it's a named type
+	// check if it's a named type
 	if named, ok := typ.(*types.Named); ok {
 		typeName := named.Obj().Name()
 
@@ -505,11 +506,11 @@ func isImmutableType(typ types.Type, immutableTypes map[string]immutableInfo) bo
 			return true
 		}
 
-		// For type aliases, the underlying type will be the aliased type
-		// We need to check if the underlying type is also a named type that's immutable
+		// for type aliases, the underlying type will be the aliased type
+		// we need to check if the underlying type is also a named type that's immutable
 		underlying := named.Underlying()
 
-		// Check if the underlying type is a struct with embedded immutable fields
+		// check if the underlying type is a struct with embedded immutable fields
 		if structType, ok := underlying.(*types.Struct); ok {
 			for i := 0; i < structType.NumFields(); i++ {
 				field := structType.Field(i)
@@ -525,15 +526,15 @@ func isImmutableType(typ types.Type, immutableTypes map[string]immutableInfo) bo
 		// Additionally, check all types in immutableTypes to see if any match this underlying structure
 		// This handles type aliases: type Alias = Immtbl
 		for immutableTypeName := range immutableTypes {
-			// For each immutable type, check if it has the same underlying structure
-			// We do this by checking if the package and type structure match
+			// for each immutable type, check if it has the same underlying structure
+			// we do this by checking if the package and type structure match
 			if named.Obj().Pkg() != nil {
-				// Try to find the immutable type in the same package scope
+				// try to find the immutable type in the same package scope
 				pkgScope := named.Obj().Pkg().Scope()
 				if immutableObj := pkgScope.Lookup(immutableTypeName); immutableObj != nil {
 					if immutableTypeObj, ok := immutableObj.(*types.TypeName); ok {
 						immutableNamedType := immutableTypeObj.Type().(*types.Named)
-						// Check if the underlying types are identical
+						// check if the underlying types are identical
 						if types.Identical(underlying, immutableNamedType.Underlying()) {
 							return true
 						}
