@@ -1,4 +1,4 @@
-`go install github.com/frroossst/pls-dont-go/cmd/immutablelint@latest`
+`go install github.com/frroossst/pls-dont-go/cmd/immutablelint@v0.3.0`
 
 ```
 git clone https://github.com/frroossst/pls-dont-go.git && cd pls-dont-go
