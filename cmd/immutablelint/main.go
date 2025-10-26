@@ -14,7 +14,7 @@ func main() {
 	// quick-and-dirty: if -V or -V=* seen, print version and exit
 	for _, a := range os.Args[1:] {
 		if a == "-V" || strings.HasPrefix(a, "-V=") || a == "--version" {
-			fmt.Println("adhyan-dev-v0.3.0")
+			fmt.Println("adhyan-dev-v0.4.0")
 		}
 	}
 
