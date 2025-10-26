@@ -6,8 +6,8 @@ import (
 )
 
 // @immutable
-type ImmutableString string
 
+type ImmutableString string
 // @immutable
 type ImmutalbeMap map[string]int
 
@@ -20,6 +20,20 @@ func succ(x int) int {
 
 func prev(x int) int {
 	return x - 1
+}
+
+var GlobalImmutableString ImmutableString = "I am immutable"
+var GlobalImmutableMap ImmutalbeMap = ImmutalbeMap{"one": 1, "two": 2}
+var GlobalImmtbl Immtbl = Immtbl{Num: 100, Str: "immutable global", Map: map[string]int{"a": 1}}
+
+func TestGlobals() {
+
+	GlobalImmutableString = "Trying to mutate global" // CATCH
+
+	GlobalImmutableMap["three"] = 3 // CATCH
+
+	GlobalImmtbl.RecvMutateNum()
+	MutateNum(&GlobalImmtbl)
 }
 
 func TestTypedefs() {
