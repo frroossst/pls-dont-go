@@ -45,6 +45,22 @@ func TestGlobals() {
 	MutateNum(&GlobalImmtbl)
 }
 
+func TestTrueTypeAliases() {
+	// Type alias (transparent, same as underlying type)
+
+	var aliasStr AliasString = "hello"
+	_ = aliasStr
+	aliasStr = "world" // CATCH - should catch mutation of alias
+
+	var aliasMap AliasMap = AliasMap{"a": 1, "b": 2}
+	_ = aliasMap
+	aliasMap["c"] = 3 // CATCH - should catch map mutation
+
+	var aliasIm AliasImmtbl = AliasImmtbl{Num: 100}
+	_ = aliasIm
+	aliasIm.Num = 200 // CATCH - should catch field mutation
+}
+
 func TestTypedefs() {
 	// @immutable
 	type MyInt int
@@ -489,20 +505,4 @@ func TestAll() {
 	var nm NumMutator = &im
 	nm.RecvMutateNum()
 
-}
-
-func TestTrueTypeAliases() {
-	// Type alias (transparent, same as underlying type)
-
-	var aliasStr AliasString = "hello"
-	_ = aliasStr
-	aliasStr = "world" // CATCH - should catch mutation of alias
-
-	var aliasMap AliasMap = AliasMap{"a": 1, "b": 2}
-	_ = aliasMap
-	aliasMap["c"] = 3 // CATCH - should catch map mutation
-
-	var aliasIm AliasImmtbl = AliasImmtbl{Num: 100}
-	_ = aliasIm
-	aliasIm.Num = 200 // CATCH - should catch field mutation
 }

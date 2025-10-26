@@ -27,10 +27,45 @@ type immutableInfo struct {
 	pos      token.Pos
 }
 
+// check for parser errors, if they exist, skip analysis
+func isParserOk(pass *analysis.Pass) (any, error) {
+	for _, file := range pass.Files {
+		foundBad := false
+		ast.Inspect(file, func(n ast.Node) bool {
+			if _, ok := n.(*ast.BadExpr); ok {
+				foundBad = true
+				return false
+			}
+			if _, ok := n.(*ast.BadDecl); ok {
+				foundBad = true
+				return false
+			}
+			if _, ok := n.(*ast.BadStmt); ok {
+				foundBad = true
+				return false
+			}
+			return true
+		})
+		if foundBad {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func run(pass *analysis.Pass) (any, error) {
 	putLog(info, "=====================================")
 
+	if ok, _ := isParserOk(pass); !ok.(bool) {
+		putLog(info, "immutablecheck: analysis skipped due to errors in package")
+		return nil, nil
+	}
+
 	immutableTypes := make(map[string]immutableInfo)
+
+	// track variables that use immutable type aliases
+	// maps variable object to the type alias name used in declaration
+	varToTypeAlias := make(map[types.Object]string)
 
 	// need to track copied variables from map/slice access
 	// otherwise it can throw a false positive on a copy
@@ -64,6 +99,71 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	putLog(info, "finished first pass")
 	putLog(dbug, Pretty_print_immutables(&immutableTypes))
+
+	putLog(info, "started tracking type alias variables")
+	// Collect variables declared with immutable type aliases
+	// For type aliases like: type AliasString = string, we need to track
+	// which variables are declared with these aliases
+	for _, file := range pass.Files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.ValueSpec:
+				// Variable declaration like: var x AliasString = "hello"
+				if node.Type != nil {
+					if ident, ok := node.Type.(*ast.Ident); ok {
+						typeName := ident.Name
+						// Check if this type name is an immutable type
+						if _, exists := immutableTypes[typeName]; exists {
+							// Associate all variables in this spec with this type name
+							for _, name := range node.Names {
+								if obj := pass.TypesInfo.ObjectOf(name); obj != nil {
+									varToTypeAlias[obj] = typeName
+								}
+							}
+						}
+					}
+				}
+			case *ast.AssignStmt:
+				// Short variable declaration: x := AliasString("hello")
+				// We need to check the RHS for type conversions
+				if node.Tok == token.DEFINE {
+					for i, rhs := range node.Rhs {
+						if i >= len(node.Lhs) {
+							break
+						}
+						// Check if RHS is a type conversion or composite literal
+						if call, ok := rhs.(*ast.CallExpr); ok {
+							if ident, ok := call.Fun.(*ast.Ident); ok {
+								typeName := ident.Name
+								if _, exists := immutableTypes[typeName]; exists {
+									if lhsIdent, ok := node.Lhs[i].(*ast.Ident); ok {
+										if obj := pass.TypesInfo.ObjectOf(lhsIdent); obj != nil {
+											varToTypeAlias[obj] = typeName
+										}
+									}
+								}
+							}
+						}
+						// Check for composite literals like: x := AliasType{...}
+						if compLit, ok := rhs.(*ast.CompositeLit); ok {
+							if ident, ok := compLit.Type.(*ast.Ident); ok {
+								typeName := ident.Name
+								if _, exists := immutableTypes[typeName]; exists {
+									if lhsIdent, ok := node.Lhs[i].(*ast.Ident); ok {
+										if obj := pass.TypesInfo.ObjectOf(lhsIdent); obj != nil {
+											varToTypeAlias[obj] = typeName
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	putLog(info, "finished tracking type alias variables")
 	putLog(info, "started tracking copies and aliases pass")
 
 	// track which variables are copies from map/slice access and aliases to immutable fields
@@ -141,9 +241,9 @@ func run(pass *analysis.Pass) (any, error) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.AssignStmt:
-				checkAssignmentWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField)
+				checkAssignmentWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias)
 			case *ast.IncDecStmt:
-				checkIncDecWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField)
+				checkIncDecWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias)
 			}
 			return true
 		})
@@ -292,7 +392,7 @@ func getTypeNameFromTypeRecursive(typ types.Type, immutableTypes map[string]immu
 	return ""
 }
 
-func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool) {
+func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string) {
 	// skip variable declarations (:= token)
 	// we only care about mutations, not initial assignments
 	// also like if initial assignments were not allowed then like how do I even code?
@@ -308,7 +408,7 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 			// 1. im = Immtbl{} (reassigning whole immutable - should CATCH)
 			// 2. result = &im (assigning pointer - should NOT catch, it's read-only yet)
 			// 3. val = mapOfImmutables["key"] (assigning copy - should also NOT catch)
-			if isImmutableVariable(pass, ident, immutableTypes) {
+			if isImmutableVariable(pass, ident, immutableTypes, varToTypeAlias) {
 				// check RHS - if it's just taking address, don't flag (read-only operation)
 				if i < len(stmt.Rhs) {
 					rhs := stmt.Rhs[i]
@@ -336,13 +436,13 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 		}
 
 		// for all other LHS patterns, check if it's an immutable mutation
-		if isImmutableMutationWithAliases(pass, lhs, immutableTypes, aliasToImmutableField) {
+		if isImmutableMutationWithAliases(pass, lhs, immutableTypes, aliasToImmutableField, varToTypeAlias) {
 			reportMutation(pass, stmt.Pos(), getExpressionString(lhs), lhs, immutableTypes, "mutating immutable field in assignment")
 		}
 	}
 }
 
-func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool) {
+func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string) {
 	// check if we're incrementing/decrementing a field of a copied variable
 	if sel, ok := stmt.X.(*ast.SelectorExpr); ok {
 		if base, ok := sel.X.(*ast.Ident); ok {
@@ -354,7 +454,7 @@ func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, 
 		}
 	}
 
-	if isImmutableMutationWithAliases(pass, stmt.X, immutableTypes, aliasToImmutableField) {
+	if isImmutableMutationWithAliases(pass, stmt.X, immutableTypes, aliasToImmutableField, varToTypeAlias) {
 		reportMutation(pass, stmt.Pos(), getExpressionString(stmt.X), stmt.X, immutableTypes, "incrementing/decrementing immutable field")
 	}
 }
@@ -370,7 +470,7 @@ func stripParens(expr ast.Expr) ast.Expr {
 	}
 }
 
-func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutableTypes map[string]immutableInfo, aliasToImmutableField map[types.Object]bool) bool {
+func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutableTypes map[string]immutableInfo, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string) bool {
 	// Strip all parentheses before checking
 	expr = stripParens(expr)
 
@@ -384,7 +484,7 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 
 		if ident, ok := x.(*ast.Ident); ok {
 			// Direct field access: check if the base variable is immutable
-			if isImmutableVariable(pass, ident, immutableTypes) {
+			if isImmutableVariable(pass, ident, immutableTypes, varToTypeAlias) {
 				return true
 			}
 			// Also check if this is accessing a field from an embedded immutable type
@@ -407,7 +507,7 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 				return true
 			}
 			// Then recursively check the parent selector
-			return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField)
+			return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField, varToTypeAlias)
 		} else if _, ok := x.(*ast.IndexExpr); ok {
 			// Handle mutations like: mapOfImmutablePtrs["key"].Num
 			// or arr[0].Num
@@ -415,7 +515,7 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 			if parentType != nil && isImmutableType(parentType, immutableTypes) {
 				return true
 			}
-			return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField)
+			return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField, varToTypeAlias)
 		} else if _, ok := x.(*ast.CallExpr); ok {
 			// Handle mutations like: getImmutable().Num
 			returnType := pass.TypesInfo.TypeOf(x)
@@ -450,7 +550,7 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 			return true
 		}
 		// Also check the container itself (strip parens first)
-		return isImmutableMutationWithAliases(pass, stripParens(e.X), immutableTypes, aliasToImmutableField)
+		return isImmutableMutationWithAliases(pass, stripParens(e.X), immutableTypes, aliasToImmutableField, varToTypeAlias)
 
 	case *ast.StarExpr:
 		// Handle pointer dereferences: *ptr = value or (*ptr).Field
@@ -471,18 +571,18 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 			}
 		}
 		// Also recursively check the pointer expression
-		return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField)
+		return isImmutableMutationWithAliases(pass, x, immutableTypes, aliasToImmutableField, varToTypeAlias)
 
 	case *ast.ParenExpr:
 		// Should not reach here due to stripParens at entry, but handle anyway
-		return isImmutableMutationWithAliases(pass, e.X, immutableTypes, aliasToImmutableField)
+		return isImmutableMutationWithAliases(pass, e.X, immutableTypes, aliasToImmutableField, varToTypeAlias)
 
 	case *ast.UnaryExpr:
 		// Handle unary expressions like &im.Num or *ptr
 		switch e.Op {
 		case token.AND:
 			// Taking address: check if we're taking address of immutable field
-			return isImmutableMutationWithAliases(pass, stripParens(e.X), immutableTypes, aliasToImmutableField)
+			return isImmutableMutationWithAliases(pass, stripParens(e.X), immutableTypes, aliasToImmutableField, varToTypeAlias)
 		case token.MUL:
 			// Dereferencing: check the dereferenced type
 			derefType := pass.TypesInfo.TypeOf(e)
@@ -495,7 +595,7 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 
 	case *ast.Ident:
 		// direct mutation of immutable variable
-		return isImmutableVariable(pass, e, immutableTypes)
+		return isImmutableVariable(pass, e, immutableTypes, varToTypeAlias)
 	}
 	return false
 }
@@ -540,10 +640,30 @@ func isFieldFromEmbeddedImmutable(structType *types.Struct, fieldName string, im
 	return false
 }
 
-func isImmutableVariable(pass *analysis.Pass, ident *ast.Ident, immutableTypes map[string]immutableInfo) bool {
+func isImmutableVariable(pass *analysis.Pass, ident *ast.Ident, immutableTypes map[string]immutableInfo, varToTypeAlias map[types.Object]string) bool {
 	obj := pass.TypesInfo.ObjectOf(ident)
 	if obj == nil {
 		return false
+	}
+
+	// First check if this variable was declared with an immutable type alias
+	// This handles type aliases like: type AliasString = string
+	if typeName, exists := varToTypeAlias[obj]; exists {
+		if _, isImmutable := immutableTypes[typeName]; isImmutable {
+			return true
+		}
+	}
+
+	// Then check if the variable's type is a named immutable type
+	// This handles type definitions like: type ImmutableString string
+	if varObj, ok := obj.(*types.Var); ok {
+		// Get the type name as it appears in the source
+		if named, ok := varObj.Type().(*types.Named); ok {
+			typeName := named.Obj().Name()
+			if _, exists := immutableTypes[typeName]; exists {
+				return true
+			}
+		}
 	}
 
 	typ := obj.Type()
@@ -603,9 +723,21 @@ func isImmutableType(typ types.Type, immutableTypes map[string]immutableInfo) bo
 				pkgScope := named.Obj().Pkg().Scope()
 				if immutableObj := pkgScope.Lookup(immutableTypeName); immutableObj != nil {
 					if immutableTypeObj, ok := immutableObj.(*types.TypeName); ok {
-						immutableNamedType := immutableTypeObj.Type().(*types.Named)
+						immutableType := immutableTypeObj.Type()
+
+						// Handle both *types.Named and *types.Alias
+						var immutableUnderlying types.Type
+						if immutableNamed, ok := immutableType.(*types.Named); ok {
+							immutableUnderlying = immutableNamed.Underlying()
+						} else if alias, ok := immutableType.(interface{ Rhs() types.Type }); ok {
+							// For type aliases, get the RHS (underlying type)
+							immutableUnderlying = alias.Rhs()
+						} else {
+							continue
+						}
+
 						// check if the underlying types are identical
-						if types.Identical(underlying, immutableNamedType.Underlying()) {
+						if types.Identical(underlying, immutableUnderlying) {
 							return true
 						}
 					}
