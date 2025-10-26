@@ -1,0 +1,5 @@
+- [ ] linter crashes when there is a compiler error in the file
+
+- [ ] add more comprehensive tests for more complex initializers of immutable variables
+
+- [ ] add a `// @allow-mutate` directive for one time mutations of immutable variables
