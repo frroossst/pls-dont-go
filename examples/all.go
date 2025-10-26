@@ -22,7 +22,22 @@ func prev(x int) int {
 	return x - 1
 }
 
-func TestOtherType() {
+func TestTypedefs() {
+	// @immutable
+	type MyInt int
+	// @immutable
+	type MyString string
+
+	var mi MyInt = 10
+	_ = mi
+	mi = 20 // CATCH
+
+	var ms MyString = "immutable"
+	_ = ms
+	ms = "mutable" // CATCH
+}
+
+func TestTypeAliases() {
 	var imStr ImmutableString = "hello"
 	_ = imStr
 	imStr = "world" // CATCH
@@ -166,8 +181,9 @@ func TestAll() {
 	 * Pointer auto-deref assignments
 	 */
 	imPtr := &im
-	imPtr.Num = -99        // CATCH
-	imPtr.Str = "ptr heyo" // CATCH
+	imPtr.Num = -99                  // CATCH
+	imPtr.Str = "ptr heyo"           // CATCH
+	imPtr.Str = (string)("ptr heyo") // CATCH
 
 	/*
 	 * python like assignments
@@ -241,6 +257,9 @@ func TestAll() {
 	 */
 	p := (*int)(unsafe.Pointer(&im.Num))
 	*p = 100 // CATCH - use of unsafe to mutate immutable
+
+	pP := (&im.Num)
+	*pP = 200 // CATCH
 
 	v := reflect.ValueOf(&im).Elem()
 	v.FieldByName("Num").SetInt(42) // CATCH - use of reflect to mutate immutable
