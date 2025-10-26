@@ -6,8 +6,8 @@ import (
 )
 
 // @immutable
-
 type ImmutableString string
+
 // @immutable
 type ImmutalbeMap map[string]int
 
@@ -480,4 +480,28 @@ func TestAll() {
 	var nm NumMutator = &im
 	nm.RecvMutateNum()
 
+}
+
+func TestTrueTypeAliases() {
+	// Type alias (transparent, same as underlying type)
+	// @immutable
+	type AliasString = string
+
+	var aliasStr AliasString = "hello"
+	_ = aliasStr
+	aliasStr = "world" // CATCH - should catch mutation of alias
+
+	// @immutable
+	type AliasMap = map[string]int
+
+	var aliasMap AliasMap = AliasMap{"a": 1, "b": 2}
+	_ = aliasMap
+	aliasMap["c"] = 3 // CATCH - should catch map mutation
+
+	// @immutable
+	type AliasImmtbl = Immtbl
+
+	var aliasIm AliasImmtbl = AliasImmtbl{Num: 100}
+	_ = aliasIm
+	aliasIm.Num = 200 // CATCH - should catch field mutation
 }
