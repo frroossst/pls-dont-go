@@ -58,23 +58,24 @@ func reportMutation(pass *analysis.Pass, pos token.Pos, exprStr string, expr ast
 	typeName := getImmutableTypeName(pass, expr, immutableTypes)
 
 	position := pass.Fset.Position(pos)
+	sourceLine := getSourceLine(position.Filename, position.Line)
 
 	if typeName == "" {
-		msg := formatError(position, exprStr, "", position, "", helpMsg)
+		msg := formatError(position, exprStr, "", position, sourceLine, helpMsg)
 		pass.Reportf(pos, "%s", msg)
 		return
 	}
 
 	info, exists := immutableTypes[typeName]
 	if !exists {
-		msg := formatError(position, exprStr, typeName, position, "", helpMsg)
+		msg := formatError(position, exprStr, typeName, position, sourceLine, helpMsg)
 		pass.Reportf(pos, "%s", msg)
 		return
 	}
 
 	declPosition := pass.Fset.Position(info.pos)
 
-	msg := formatError(position, exprStr, typeName, declPosition, getSourceLine(position.Filename, position.Line), helpMsg)
+	msg := formatError(position, exprStr, typeName, declPosition, sourceLine, helpMsg)
 	pass.Reportf(pos, "%s", msg)
 }
 

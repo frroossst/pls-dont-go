@@ -12,7 +12,7 @@ type ImmutableString string
 type AliasString = string
 
 // @immutable
-type ImmutalbeMap map[string]int
+type ImmutableMap map[string]int
 
 // @immutable
 type AliasMap = map[string]int
@@ -32,7 +32,7 @@ func prev(x int) int {
 }
 
 var GlobalImmutableString ImmutableString = "I am immutable"
-var GlobalImmutableMap ImmutalbeMap = ImmutalbeMap{"one": 1, "two": 2}
+var GlobalImmutableMap ImmutableMap = ImmutableMap{"one": 1, "two": 2}
 var GlobalImmtbl Immtbl = Immtbl{Num: 100, Str: "immutable global", Map: map[string]int{"a": 1}}
 
 func TestGlobals() {
@@ -86,7 +86,7 @@ func TestTypeAliases() {
 	_ = normalStr
 	normalStr = "mutable string" // this is fine cause upto user to cast
 
-	var imMap ImmutalbeMap = ImmutalbeMap{"a": 1, "b": 2, "c": 3}
+	var imMap ImmutableMap = ImmutableMap{"a": 1, "b": 2, "c": 3}
 	_ = imMap
 	imMap["d"] = 4 // CATCH
 	// cast to normal map and mutate
@@ -94,7 +94,7 @@ func TestTypeAliases() {
 	normalMap["e"] = 5 // this is fine cause upto user to cast
 
 	// reinit the map
-	imMap = ImmutalbeMap{"x": 10} // CATCH
+	imMap = ImmutableMap{"x": 10} // CATCH
 
 	var fnPtr ImmutableFunctionPointer = succ
 	_ = fnPtr
@@ -537,4 +537,42 @@ func TestMutations() {
 	imm_slice[1] = 20 // @allow-mutate
 
 	_ = imm_slice
+
+	GlobalImmtbl.Num = 999    // CATCH
+	GlobalImmtbl.Num = 1000   // @allow-mutate
+	GlobalImmtbl.Str = "test" // CATCH
+
+	GlobalImmtbl.Arr[0] = 100 // CATCH
+	GlobalImmtbl.Arr[1] = 200 // @allow-mutate
+	GlobalImmtbl.Arr[2] = 300 // CATCH
+
+	GlobalImmtbl.Two[0][0] = 99       // CATCH
+	GlobalImmtbl.Two[0][1] = 88       // @allow-mutate
+	GlobalImmtbl.Two[1][0] = succ(0)  // CATCH
+	GlobalImmtbl.Two[1][0] = succ(-1) // @allow-mutate
+
+	GlobalImmtbl.Num += 5 // CATCH
+	GlobalImmtbl.Num -= 1 // @allow-mutate
+	GlobalImmtbl.Num *= 2 // CATCH
+
+	GlobalImmtbl.Num++ // CATCH
+	GlobalImmtbl.Num-- // @allow-mutate
+
+	GlobalImmtbl.Cll.Value = 500 // CATCH
+	GlobalImmtbl.Cll.Value = 600 // @allow-mutate
+
+	ptrToGlobal := &GlobalImmtbl.Num
+	*ptrToGlobal = 123 // CATCH
+	*ptrToGlobal = 456 // @allow-mutate
+
+	imm_str = "seq1" // CATCH
+	imm_str = "seq2" // @allow-mutate
+	imm_str = "seq3" // CATCH
+	imm_str = "seq4" // @allow-mutate
+	imm_str = "seq5" // CATCH
+
+	GlobalImmtbl.Str = "style1" // CATCH
+	GlobalImmtbl.Str = "style2" // @allow-mutate
+	GlobalImmtbl.Str = "style4" /* @allow-mutate */ // block comment style
+	GlobalImmtbl.Str = "style5" // CATCH
 }
