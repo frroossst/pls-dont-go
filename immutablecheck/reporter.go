@@ -100,23 +100,12 @@ func formatError(mutationPos token.Position, exprStr string, typeName string, de
 		declRelPath := filepath.Base(declPos.Filename)
 		sb.WriteString(fmt.Sprintf("   = note: '%s' was marked @immutable at %s:%d:%d\n",
 			typeName, declRelPath, declPos.Line, declPos.Column))
-
-		// Use custom help message if provided, otherwise use default
-		if helpMsg != "" {
-			sb.WriteString(fmt.Sprintf("   = help: %s\n", helpMsg))
-		} else {
-			sb.WriteString("   = help: immutable types cannot be modified after creation\n")
-		}
 	} else {
 		sb.WriteString(fmt.Sprintf("   = note: attempting to mutate '%s'\n", exprStr))
-
-		// Use custom help message if provided, otherwise use default
-		if helpMsg != "" {
-			sb.WriteString(fmt.Sprintf("   = help: %s\n", helpMsg))
-		} else {
-			sb.WriteString("   = help: this expression refers to an immutable type\n")
-		}
 	}
+
+	// Always show the @allow-mutate suppression note
+	sb.WriteString("   = note: use //@allow-mutate comment inline to suppress this error if needed\n")
 
 	return sb.String()
 }
