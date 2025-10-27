@@ -506,3 +506,24 @@ func TestAll() {
 	nm.RecvMutateNum()
 
 }
+
+func TestMutations() {
+
+	var imm_str ImmutableString = "immutable string"
+	imm_str = "mutated string"      // CATCH
+	imm_str = "I need this changed" // @allow-mutate
+	imm_str = "mutated string two"  // CATCH
+
+	_ = imm_str
+
+	GlobalImmtbl.Map["initial"] = 1 // CATCH
+	GlobalImmtbl.Map["mutt"] = -1   // @allow-mutate
+
+	// @immutable
+	type ImmutableInt int
+
+	var imm_int ImmutableInt = 0
+	for ; imm_int < 10; imm_int++ /* @allow-mutate */ {
+		_ = imm_int
+	}
+}
