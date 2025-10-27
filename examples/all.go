@@ -526,4 +526,15 @@ func TestMutations() {
 	for ; imm_int < 10; imm_int++ /* @allow-mutate */ {
 		_ = imm_int
 	}
+
+	// immutable slice of immutable structs
+	// @immutable
+	type ImmutableStruct = []int
+
+	var imm_slice ImmutableStruct = []int{1, 2, 3}
+
+	imm_slice[0] = 10 // CATCH
+	imm_slice[1] = 20 // @allow-mutate
+
+	_ = imm_slice
 }
