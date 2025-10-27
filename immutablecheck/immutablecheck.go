@@ -1,9 +1,11 @@
 package immutablecheck
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
+	"os"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -54,6 +56,8 @@ func isParserOk(pass *analysis.Pass) (any, error) {
 }
 
 func run(pass *analysis.Pass) (any, error) {
+	microDeltaIter() 
+	
 	putLog(info, "=====================================")
 
 	if ok, _ := isParserOk(pass); !ok.(bool) {
@@ -241,14 +245,18 @@ func run(pass *analysis.Pass) (any, error) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.AssignStmt:
-				checkAssignmentWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias)
+				checkAssignmentWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias, file.Comments)
 			case *ast.IncDecStmt:
-				checkIncDecWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias)
+				checkIncDecWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias, file.Comments)
 			}
 			return true
 		})
 	}
 	putLog(info, "finished second pass")
+
+	totalTimeMicros := microDeltaIter()
+	totalTimeMillis := float64(totalTimeMicros) / 1000.0
+	fmt.Fprintf(os.Stderr, "immutablecheck: analysis completed in %.2f ms\n", totalTimeMillis)
 
 	return nil, nil
 }
@@ -258,6 +266,29 @@ func hasImmutableComment(genDecl *ast.GenDecl, _ []*ast.CommentGroup) bool {
 		for _, comment := range genDecl.Doc.List {
 			text := strings.TrimSpace(comment.Text)
 			if strings.Contains(text, "@immutable") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasAllowMutateComment checks if a statement has an @allow-mutate directive
+// The directive MUST be an inline comment directly after the statement on the same line.
+// Format: x = "value" //@allow-mutate  OR  x = "value" // @allow-mutate
+// Comments on lines above or below the statement are NOT supported.
+// ^^^ this just causes a lot of problems with how go AST groups together comments in a CommentGroup
+func hasAllowMutateComment(pass *analysis.Pass, pos token.Pos, commentGroups []*ast.CommentGroup) bool {
+	stmtPosition := pass.Fset.Position(pos)
+
+	for _, cg := range commentGroups {
+		for _, comment := range cg.List {
+			commentPos := pass.Fset.Position(comment.Pos())
+			text := strings.TrimSpace(comment.Text)
+
+			// Check if this specific comment contains @allow-mutate
+			// ONLY allow inline comments on the exact same line as the statement
+			if strings.Contains(text, "@allow-mutate") && commentPos.Line == stmtPosition.Line {
 				return true
 			}
 		}
@@ -392,7 +423,12 @@ func getTypeNameFromTypeRecursive(typ types.Type, immutableTypes map[string]immu
 	return ""
 }
 
-func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string) {
+func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string, commentGroups []*ast.CommentGroup) {
+	// Check if this statement has an @allow-mutate directive
+	if hasAllowMutateComment(pass, stmt.Pos(), commentGroups) {
+		return // Skip this mutation check
+	}
+
 	// skip variable declarations (:= token)
 	// we only care about mutations, not initial assignments
 	// also like if initial assignments were not allowed then like how do I even code?
@@ -442,7 +478,12 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 	}
 }
 
-func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string) {
+func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string, commentGroups []*ast.CommentGroup) {
+	// Check if this statement has an @allow-mutate directive
+	if hasAllowMutateComment(pass, stmt.Pos(), commentGroups) {
+		return // Skip this mutation check
+	}
+
 	// check if we're incrementing/decrementing a field of a copied variable
 	if sel, ok := stmt.X.(*ast.SelectorExpr); ok {
 		if base, ok := sel.X.(*ast.Ident); ok {
