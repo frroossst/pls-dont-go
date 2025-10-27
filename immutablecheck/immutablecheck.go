@@ -56,8 +56,8 @@ func isParserOk(pass *analysis.Pass) (any, error) {
 }
 
 func run(pass *analysis.Pass) (any, error) {
-	microDeltaIter() 
-	
+	microDeltaIter()
+
 	putLog(info, "=====================================")
 
 	if ok, _ := isParserOk(pass); !ok.(bool) {
@@ -240,14 +240,25 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	putLog(info, "finished tracking copies and aliases pass")
 
+	ctx := &analysisCtx{
+		pass:                  pass,
+		immutableTypes:        immutableTypes,
+		copiedVariables:       copiedVariables,
+		aliasToImmutableField: aliasToImmutableField,
+		varToTypeAlias:        varToTypeAlias,
+		commentGroups:         nil,
+	}
+
 	putLog(info, "started second pass")
 	for _, file := range pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.AssignStmt:
-				checkAssignmentWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias, file.Comments)
+				ctx.commentGroups = file.Comments
+				checkAssignmentWithCopiesAndAliases(ctx, node)
 			case *ast.IncDecStmt:
-				checkIncDecWithCopiesAndAliases(pass, node, immutableTypes, copiedVariables, aliasToImmutableField, varToTypeAlias, file.Comments)
+				ctx.commentGroups = file.Comments
+				checkIncDecWithCopiesAndAliases(ctx, node)
 			}
 			return true
 		})
@@ -423,9 +434,18 @@ func getTypeNameFromTypeRecursive(typ types.Type, immutableTypes map[string]immu
 	return ""
 }
 
-func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string, commentGroups []*ast.CommentGroup) {
+type analysisCtx struct {
+	pass                  *analysis.Pass
+	immutableTypes        map[string]immutableInfo
+	copiedVariables       map[types.Object]bool
+	aliasToImmutableField map[types.Object]bool
+	varToTypeAlias        map[types.Object]string
+	commentGroups         []*ast.CommentGroup
+}
+
+func checkAssignmentWithCopiesAndAliases(ctx *analysisCtx, stmt *ast.AssignStmt) {
 	// Check if this statement has an @allow-mutate directive
-	if hasAllowMutateComment(pass, stmt.Pos(), commentGroups) {
+	if hasAllowMutateComment(ctx.pass, stmt.Pos(), ctx.commentGroups) {
 		return // Skip this mutation check
 	}
 
@@ -444,7 +464,7 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 			// 1. im = Immtbl{} (reassigning whole immutable - should CATCH)
 			// 2. result = &im (assigning pointer - should NOT catch, it's read-only yet)
 			// 3. val = mapOfImmutables["key"] (assigning copy - should also NOT catch)
-			if isImmutableVariable(pass, ident, immutableTypes, varToTypeAlias) {
+			if isImmutableVariable(ctx.pass, ident, ctx.immutableTypes, ctx.varToTypeAlias) {
 				// check RHS - if it's just taking address, don't flag (read-only operation)
 				if i < len(stmt.Rhs) {
 					rhs := stmt.Rhs[i]
@@ -454,7 +474,7 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 					}
 				}
 				// this is reassigning the whole immutable struct - flag it
-				reportMutation(pass, stmt.Pos(), ident.Name, lhs, immutableTypes, "reassigning whole immutable struct")
+				reportMutation(ctx.pass, stmt.Pos(), ident.Name, lhs, ctx.immutableTypes, "reassigning whole immutable struct")
 			}
 			continue
 		}
@@ -463,8 +483,8 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 		if sel, ok := lhs.(*ast.SelectorExpr); ok {
 			// check if the base is a copied variable
 			if base, ok := sel.X.(*ast.Ident); ok {
-				baseObj := pass.TypesInfo.ObjectOf(base)
-				if baseObj != nil && copiedVariables[baseObj] {
+				baseObj := ctx.pass.TypesInfo.ObjectOf(base)
+				if baseObj != nil && ctx.copiedVariables[baseObj] {
 					// this is mutating a copy - skip it
 					continue
 				}
@@ -472,31 +492,31 @@ func checkAssignmentWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.AssignSt
 		}
 
 		// for all other LHS patterns, check if it's an immutable mutation
-		if isImmutableMutationWithAliases(pass, lhs, immutableTypes, aliasToImmutableField, varToTypeAlias) {
-			reportMutation(pass, stmt.Pos(), getExpressionString(lhs), lhs, immutableTypes, "mutating immutable field in assignment")
+		if isImmutableMutationWithAliases(ctx.pass, lhs, ctx.immutableTypes, ctx.aliasToImmutableField, ctx.varToTypeAlias) {
+			reportMutation(ctx.pass, stmt.Pos(), getExpressionString(lhs), lhs, ctx.immutableTypes, "mutating immutable field in assignment")
 		}
 	}
 }
 
-func checkIncDecWithCopiesAndAliases(pass *analysis.Pass, stmt *ast.IncDecStmt, immutableTypes map[string]immutableInfo, copiedVariables map[types.Object]bool, aliasToImmutableField map[types.Object]bool, varToTypeAlias map[types.Object]string, commentGroups []*ast.CommentGroup) {
+func checkIncDecWithCopiesAndAliases(ctx *analysisCtx, stmt *ast.IncDecStmt) {
 	// Check if this statement has an @allow-mutate directive
-	if hasAllowMutateComment(pass, stmt.Pos(), commentGroups) {
+	if hasAllowMutateComment(ctx.pass, stmt.Pos(), ctx.commentGroups) {
 		return // Skip this mutation check
 	}
 
 	// check if we're incrementing/decrementing a field of a copied variable
 	if sel, ok := stmt.X.(*ast.SelectorExpr); ok {
 		if base, ok := sel.X.(*ast.Ident); ok {
-			baseObj := pass.TypesInfo.ObjectOf(base)
-			if baseObj != nil && copiedVariables[baseObj] {
+			baseObj := ctx.pass.TypesInfo.ObjectOf(base)
+			if baseObj != nil && ctx.copiedVariables[baseObj] {
 				// this is mutating a copy - skip it
 				return
 			}
 		}
 	}
 
-	if isImmutableMutationWithAliases(pass, stmt.X, immutableTypes, aliasToImmutableField, varToTypeAlias) {
-		reportMutation(pass, stmt.Pos(), getExpressionString(stmt.X), stmt.X, immutableTypes, "incrementing/decrementing immutable field")
+	if isImmutableMutationWithAliases(ctx.pass, stmt.X, ctx.immutableTypes, ctx.aliasToImmutableField, ctx.varToTypeAlias) {
+		reportMutation(ctx.pass, stmt.Pos(), getExpressionString(stmt.X), stmt.X, ctx.immutableTypes, "incrementing/decrementing immutable field")
 	}
 }
 
