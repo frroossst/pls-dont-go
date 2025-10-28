@@ -1,5 +1,10 @@
 .PHONY: all build clean test test-advanced test-manual test-runner help run plugin lint ensure-golangci custom-gcl
 
+LATEST_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || git tag --sort=-creatordate | head -n1)
+RAW_VER := $(shell if [ -n "$(LATEST_TAG)" ]; then echo "$(LATEST_TAG)" | sed -E 's/^v?(.+)/\1/'; else echo "0.0.0"; fi)
+VERSION := adhyan-dev-v$(RAW_VER)
+LDFLAGS := -X main.version=$(VERSION)
+
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -9,7 +14,7 @@ run: build ## Runs linter with examples/all.go
 	./immutablelint examples/all.go
 
 build: ## Build the immutable linter
-	go build -o immutablelint ./cmd/immutablelint
+	go build -ldflags "$(LDFLAGS)" -o immutablelint ./cmd/immutablelint
 
 test: build ## Run linter tests against example files
 	./test_runner.bash
