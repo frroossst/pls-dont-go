@@ -4,25 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
+	"sync"
 )
-
-func NewMicroDeltaIterator() func() int64 {
-	prev := time.Now()
-	first := true
-	return func() int64 {
-		if first {
-			first = false
-			// reset baseline to now so next call measures time after this point
-			prev = time.Now()
-			return 0
-		}
-		now := time.Now()
-		delta := now.Sub(prev).Microseconds()
-		prev = now
-		return delta
-	}
-}
 
 type logLevel int
 
@@ -33,42 +16,93 @@ const (
 	dbug
 )
 
-// function to log things to a .log file for debugging
+type logLocation int
+
+const (
+	stderr = iota
+	filelog
+	nowhere
+)
+
+var (
+	logDestination    string
+	logLoc            logLocation
+	logFile           *os.File
+	logMutex          sync.Mutex
+	logDestinationSet bool
+)
+
+func SetLogDestination(dest string) {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	logDestination = dest
+	logDestinationSet = true
+
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
+
+	switch dest {
+	case "":
+		// no destination specified, suppress logs
+		logLoc = nowhere
+	case "stderr":
+		logLoc = stderr
+	default:
+		// It's a file path
+		logLoc = filelog
+	}
+}
+
 func putLog(level logLevel, s string) {
-	// NOTE: LOGGING DISABLED for RELEASE
-	_ = os.O_SYNC
-	/*
-	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Println("Error opening log file:", err)
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	if !logDestinationSet {
+		logLoc = nowhere
+	}
+
+	where := logLoc
+
+	if where == nowhere {
 		return
 	}
-	defer func() {
-		if err := f.Close(); err != nil && err == nil {
-		}
-	}()
 
 	var lvl string
 	switch level {
 	case warn:
-		lvl = "[WARN]"
+		lvl = "[WARN]  "
 	case info:
-		lvl = "[INFO]"
+		lvl = "[INFO]  "
 	case errr:
-		lvl = "[ERROR]"
+		lvl = "[ERROR] "
 	case dbug:
-		lvl = "[DBUG]"
+		lvl = "[DBUG]  "
 	default:
-		lvl = "[INFO]"
+		lvl = "[INFO]  "
 	}
 
-	delta := microDeltaIter()
-	line := fmt.Sprintf("+%8d us %s %s\n", delta, lvl, s)
+	line := fmt.Sprintf("%s %s\n", lvl, s)
 
-	if _, err := f.WriteString(line); err != nil {
-		fmt.Println("Error writing to log file:", err)
+	switch where {
+	case stderr:
+		fmt.Fprint(os.Stderr, line)
+	case filelog:
+		if logFile == nil {
+			var err error
+			logFile, err = os.OpenFile(logDestination, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening log file %s: %v\n", logDestination, err)
+				return
+			}
+		}
+
+		if _, err := logFile.WriteString(line); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing to log file: %v\n", err)
+		}
 	}
-	*/
 }
 
 // format is json like

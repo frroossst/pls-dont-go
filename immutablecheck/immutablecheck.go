@@ -1,17 +1,13 @@
 package immutablecheck
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
-	"os"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
-
-var microDeltaIter = NewMicroDeltaIterator()
 
 var Analyzer = &analysis.Analyzer{
 	Name:     "immutablecheck",
@@ -55,33 +51,46 @@ func isParserOk(pass *analysis.Pass) (any, error) {
 	return true, nil
 }
 
-func run(pass *analysis.Pass) (any, error) {
-	microDeltaIter()
+// passCollector orchestrates the multi-pass analysis for immutability checking
+type passCollector struct {
+	pass                  *analysis.Pass
+	immutableTypes        map[string]immutableInfo
+	varToTypeAlias        map[types.Object]string
+	copiedVariables       map[types.Object]bool
+	aliasToImmutableField map[types.Object]bool
+}
 
-	putLog(info, "=====================================")
-
-	if ok, _ := isParserOk(pass); !ok.(bool) {
-		putLog(info, "immutablecheck: analysis skipped due to errors in package")
-		return nil, nil
+func newPassCollector(pass *analysis.Pass) *passCollector {
+	return &passCollector{
+		pass:                  pass,
+		immutableTypes:        make(map[string]immutableInfo),
+		varToTypeAlias:        make(map[types.Object]string),
+		copiedVariables:       make(map[types.Object]bool),
+		aliasToImmutableField: make(map[types.Object]bool),
 	}
+}
 
-	immutableTypes := make(map[string]immutableInfo)
+func (pc *passCollector) firstPass() {
+	pc.collectImmutableTypes()
+}
 
-	// track variables that use immutable type aliases
-	// maps variable object to the type alias name used in declaration
-	varToTypeAlias := make(map[types.Object]string)
+func (pc *passCollector) secondPass() {
+	pc.trackTypeAliasVariables()
+}
 
-	// need to track copied variables from map/slice access
-	// otherwise it can throw a false positive on a copy
-	copiedVariables := make(map[types.Object]bool)
+func (pc *passCollector) thirdPass() {
+	pc.trackCopiesAndAliases()
+}
 
-	// track pointer aliases to immutable fields (e.g., p := &im.Num)
-	aliasToImmutableField := make(map[types.Object]bool)
+func (pc *passCollector) fourthPass() {
+	pc.checkMutations()
+}
 
-	putLog(info, "started first pass")
+// collectImmutableTypes finds all types marked with @immutable annotation
+func (pc *passCollector) collectImmutableTypes() {
+	putLog(info, "started collecting immutable types")
 
-	// collect @immutable marked types
-	for _, file := range pass.Files {
+	for _, file := range pc.pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.GenDecl:
@@ -90,7 +99,7 @@ func run(pass *analysis.Pass) (any, error) {
 					for _, spec := range node.Specs {
 						if typeSpec, ok := spec.(*ast.TypeSpec); ok {
 							typeName := typeSpec.Name.Name
-							immutableTypes[typeName] = immutableInfo{
+							pc.immutableTypes[typeName] = immutableInfo{
 								typeName: typeName,
 								pos:      typeSpec.Pos(),
 							}
@@ -101,156 +110,208 @@ func run(pass *analysis.Pass) (any, error) {
 			return true
 		})
 	}
-	putLog(info, "finished first pass")
-	putLog(dbug, Pretty_print_immutables(&immutableTypes))
 
+	putLog(info, "finished collecting immutable types")
+	putLog(dbug, Pretty_print_immutables(&pc.immutableTypes))
+}
+
+// trackTypeAliasVariables tracks variables declared with immutable type aliases
+func (pc *passCollector) trackTypeAliasVariables() {
 	putLog(info, "started tracking type alias variables")
-	// Collect variables declared with immutable type aliases
-	// For type aliases like: type AliasString = string, we need to track
-	// which variables are declared with these aliases
-	for _, file := range pass.Files {
+
+	for _, file := range pc.pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.ValueSpec:
-				// Variable declaration like: var x AliasString = "hello"
-				if node.Type != nil {
-					if ident, ok := node.Type.(*ast.Ident); ok {
-						typeName := ident.Name
-						// Check if this type name is an immutable type
-						if _, exists := immutableTypes[typeName]; exists {
-							// Associate all variables in this spec with this type name
-							for _, name := range node.Names {
-								if obj := pass.TypesInfo.ObjectOf(name); obj != nil {
-									varToTypeAlias[obj] = typeName
-								}
-							}
-						}
-					}
-				}
+				pc.processValueSpec(node)
 			case *ast.AssignStmt:
-				// Short variable declaration: x := AliasString("hello")
-				// We need to check the RHS for type conversions
-				if node.Tok == token.DEFINE {
-					for i, rhs := range node.Rhs {
-						if i >= len(node.Lhs) {
-							break
-						}
-						// Check if RHS is a type conversion or composite literal
-						if call, ok := rhs.(*ast.CallExpr); ok {
-							if ident, ok := call.Fun.(*ast.Ident); ok {
-								typeName := ident.Name
-								if _, exists := immutableTypes[typeName]; exists {
-									if lhsIdent, ok := node.Lhs[i].(*ast.Ident); ok {
-										if obj := pass.TypesInfo.ObjectOf(lhsIdent); obj != nil {
-											varToTypeAlias[obj] = typeName
-										}
-									}
-								}
-							}
-						}
-						// Check for composite literals like: x := AliasType{...}
-						if compLit, ok := rhs.(*ast.CompositeLit); ok {
-							if ident, ok := compLit.Type.(*ast.Ident); ok {
-								typeName := ident.Name
-								if _, exists := immutableTypes[typeName]; exists {
-									if lhsIdent, ok := node.Lhs[i].(*ast.Ident); ok {
-										if obj := pass.TypesInfo.ObjectOf(lhsIdent); obj != nil {
-											varToTypeAlias[obj] = typeName
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+				pc.processAssignStmt(node)
 			}
 			return true
 		})
 	}
+
 	putLog(info, "finished tracking type alias variables")
+}
+
+// processValueSpec handles variable declarations like: var x AliasString = "hello"
+func (pc *passCollector) processValueSpec(node *ast.ValueSpec) {
+	if node.Type == nil {
+		return
+	}
+
+	ident, ok := node.Type.(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	typeName := ident.Name
+	if _, exists := pc.immutableTypes[typeName]; exists {
+		// Associate all variables in this spec with this type name
+		for _, name := range node.Names {
+			if obj := pc.pass.TypesInfo.ObjectOf(name); obj != nil {
+				pc.varToTypeAlias[obj] = typeName
+			}
+		}
+	}
+}
+
+// processAssignStmt handles short variable declarations like: x := AliasString("hello")
+func (pc *passCollector) processAssignStmt(node *ast.AssignStmt) {
+	if node.Tok != token.DEFINE {
+		return
+	}
+
+	for i, rhs := range node.Rhs {
+		if i >= len(node.Lhs) {
+			break
+		}
+
+		var typeName string
+
+		// Check if RHS is a type conversion
+		if call, ok := rhs.(*ast.CallExpr); ok {
+			if ident, ok := call.Fun.(*ast.Ident); ok {
+				typeName = ident.Name
+			}
+		}
+
+		// Check for composite literals like: x := AliasType{...}
+		if compLit, ok := rhs.(*ast.CompositeLit); ok {
+			if ident, ok := compLit.Type.(*ast.Ident); ok {
+				typeName = ident.Name
+			}
+		}
+
+		if typeName != "" {
+			if _, exists := pc.immutableTypes[typeName]; exists {
+				if lhsIdent, ok := node.Lhs[i].(*ast.Ident); ok {
+					if obj := pc.pass.TypesInfo.ObjectOf(lhsIdent); obj != nil {
+						pc.varToTypeAlias[obj] = typeName
+					}
+				}
+			}
+		}
+	}
+}
+
+// trackCopiesAndAliases identifies variables that are copies from map/slice access
+// and tracks pointer aliases to immutable fields
+func (pc *passCollector) trackCopiesAndAliases() {
 	putLog(info, "started tracking copies and aliases pass")
 
-	// track which variables are copies from map/slice access and aliases to immutable fields
-	for _, file := range pass.Files {
+	for _, file := range pc.pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if assign, ok := n.(*ast.AssignStmt); ok {
-				if assign.Tok == token.DEFINE || assign.Tok == token.ASSIGN {
-					// check if RHS is an index expression (map/slice access)
-					for i, rhs := range assign.Rhs {
-						if _, ok := rhs.(*ast.IndexExpr); ok {
-							// lHS is being assigned from an index - it is mayhaps a copy
-							if i < len(assign.Lhs) {
-								if ident, ok := assign.Lhs[i].(*ast.Ident); ok {
-									obj := pass.TypesInfo.ObjectOf(ident)
-									if obj != nil && isImmutableType(obj.Type(), immutableTypes) {
-										// check if not a pointer -> then it's a copy
-										if _, isPtr := obj.Type().(*types.Pointer); !isPtr {
-											copiedVariables[obj] = true
-										}
-									}
-								}
-							}
-						}
-
-						// helper to mark alias if LHS[i] is an identifier
-						markAlias := func(lhsIdx int) {
-							if lhsIdx < len(assign.Lhs) {
-								if ident, ok := assign.Lhs[lhsIdx].(*ast.Ident); ok {
-									if obj := pass.TypesInfo.ObjectOf(ident); obj != nil {
-										aliasToImmutableField[obj] = true
-									}
-								}
-							}
-						}
-
-						// helper to check if expr is &selector-to-immutable, stripping parens
-						var checkAddrOfImmutableField func(ast.Expr) bool
-						checkAddrOfImmutableField = func(e ast.Expr) bool {
-							// strip parentheses
-							if paren, ok := e.(*ast.ParenExpr); ok {
-								return checkAddrOfImmutableField(paren.X)
-							}
-							// check for &selector
-							if unary, ok := e.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-								if sel, ok := unary.X.(*ast.SelectorExpr); ok {
-									return getImmutableTypeName(pass, sel, immutableTypes) != ""
-								}
-							}
-							return false
-						}
-
-						// track aliases: p := &im.Num or p := (&im.Num)
-						if checkAddrOfImmutableField(rhs) {
-							markAlias(i)
-							continue
-						}
-
-						// track aliases with type conversion: p := (*int)(&im.Num)
-						if call, ok := rhs.(*ast.CallExpr); ok {
-							if len(call.Args) == 1 && checkAddrOfImmutableField(call.Args[0]) {
-								markAlias(i)
-								continue
-							}
-						}
-					}
-				}
+				pc.processAssignmentForCopiesAndAliases(assign)
 			}
 			return true
 		})
 	}
+
 	putLog(info, "finished tracking copies and aliases pass")
+}
+
+// processAssignmentForCopiesAndAliases handles the logic for tracking copies and aliases
+func (pc *passCollector) processAssignmentForCopiesAndAliases(assign *ast.AssignStmt) {
+	if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
+		return
+	}
+
+	for i, rhs := range assign.Rhs {
+		// Track copies from index expressions
+		if _, ok := rhs.(*ast.IndexExpr); ok {
+			pc.trackCopyFromIndex(assign, i)
+		}
+
+		// Track aliases to immutable fields
+		if pc.isAddrOfImmutableField(rhs) {
+			pc.markAlias(assign.Lhs, i)
+			continue
+		}
+
+		// Track aliases with type conversion: p := (*int)(&im.Num)
+		if call, ok := rhs.(*ast.CallExpr); ok {
+			if len(call.Args) == 1 && pc.isAddrOfImmutableField(call.Args[0]) {
+				pc.markAlias(assign.Lhs, i)
+			}
+		}
+	}
+}
+
+// trackCopyFromIndex marks variables assigned from index expressions as copies
+func (pc *passCollector) trackCopyFromIndex(assign *ast.AssignStmt, i int) {
+	if i >= len(assign.Lhs) {
+		return
+	}
+
+	ident, ok := assign.Lhs[i].(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	obj := pc.pass.TypesInfo.ObjectOf(ident)
+	if obj == nil || !isImmutableType(obj.Type(), pc.immutableTypes) {
+		return
+	}
+
+	// check if not a pointer -> then it's a copy
+	if _, isPtr := obj.Type().(*types.Pointer); !isPtr {
+		pc.copiedVariables[obj] = true
+	}
+}
+
+// markAlias marks a variable at the given index as an alias to an immutable field
+func (pc *passCollector) markAlias(lhs []ast.Expr, lhsIdx int) {
+	if lhsIdx >= len(lhs) {
+		return
+	}
+
+	ident, ok := lhs[lhsIdx].(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	if obj := pc.pass.TypesInfo.ObjectOf(ident); obj != nil {
+		pc.aliasToImmutableField[obj] = true
+	}
+}
+
+// isAddrOfImmutableField checks if expr is &selector-to-immutable, stripping parens
+func (pc *passCollector) isAddrOfImmutableField(expr ast.Expr) bool {
+	// strip parentheses
+	if paren, ok := expr.(*ast.ParenExpr); ok {
+		return pc.isAddrOfImmutableField(paren.X)
+	}
+
+	// check for &selector
+	unary, ok := expr.(*ast.UnaryExpr)
+	if !ok || unary.Op != token.AND {
+		return false
+	}
+
+	sel, ok := unary.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	return getImmutableTypeName(pc.pass, sel, pc.immutableTypes) != ""
+}
+
+// checkMutations performs the final pass to detect and report immutable violations
+func (pc *passCollector) checkMutations() {
+	putLog(info, "started mutation checking pass")
 
 	ctx := &analysisCtx{
-		pass:                  pass,
-		immutableTypes:        immutableTypes,
-		copiedVariables:       copiedVariables,
-		aliasToImmutableField: aliasToImmutableField,
-		varToTypeAlias:        varToTypeAlias,
+		pass:                  pc.pass,
+		immutableTypes:        pc.immutableTypes,
+		copiedVariables:       pc.copiedVariables,
+		aliasToImmutableField: pc.aliasToImmutableField,
+		varToTypeAlias:        pc.varToTypeAlias,
 		commentGroups:         nil,
 	}
 
-	putLog(info, "started second pass")
-	for _, file := range pass.Files {
+	for _, file := range pc.pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.AssignStmt:
@@ -263,11 +324,24 @@ func run(pass *analysis.Pass) (any, error) {
 			return true
 		})
 	}
-	putLog(info, "finished second pass")
 
-	totalTimeMicros := microDeltaIter()
-	totalTimeMillis := float64(totalTimeMicros) / 1000.0
-	fmt.Fprintf(os.Stderr, "immutablecheck: analysis completed in %.2f ms\n", totalTimeMillis)
+	putLog(info, "finished mutation checking pass")
+}
+
+func run(pass *analysis.Pass) (any, error) {
+	putLog(info, "=====================================")
+
+	if ok, _ := isParserOk(pass); !ok.(bool) {
+		putLog(info, "immutablecheck: analysis skipped due to errors in package")
+		return nil, nil
+	}
+
+	// Create pass collector and run all analysis phases
+	collector := newPassCollector(pass)
+	collector.firstPass()
+	collector.secondPass()
+	collector.thirdPass()
+	collector.fourthPass()
 
 	return nil, nil
 }
