@@ -576,3 +576,18 @@ func TestMutations() {
 	GlobalImmtbl.Str = "style4" /* @allow-mutate */ // block comment style
 	GlobalImmtbl.Str = "style5" // CATCH
 }
+
+// @immutable
+type Imm struct {
+    x int
+}
+
+func multi() (*Imm, int) {
+    return nil, 0
+}
+
+func TestMultipleReturns(imm *Imm, i int)  {
+    if imm.x == 0 && i == 0 {
+        imm, i = multi() // unexpected warning
+    }
+}
