@@ -10,6 +10,17 @@ help: ## Show this help message
 
 all: build
 
+tag: ## ask user for a new tag and push it
+	@echo "curr = $(RAW_VER)"
+	@echo "make sure to commit all changes before tagging!!!"
+	@read -p "Enter new tag (without 'v' prefix): " newtag; \
+	if [ -z "$$newtag" ]; then \
+		echo "No tag entered. Aborting."; \
+		exit 1; \
+	fi; \
+	git tag -a "v$$newtag" -m "v$$newtag"; \
+	git push origin "v$$newtag"
+
 run: build ## Runs linter with examples/all.go
 	./immutablelint examples/all.go
 
