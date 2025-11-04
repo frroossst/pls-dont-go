@@ -579,15 +579,26 @@ func TestMutations() {
 
 // @immutable
 type Imm struct {
-    x int
+	x int
 }
 
 func multi() (*Imm, int) {
-    return nil, 0
+	return nil, 0
 }
 
-func TestMultipleReturns(imm *Imm, i int)  {
-    if imm.x == 0 && i == 0 {
-        imm, i = multi() // unexpected warning
-    }
+func multiStr() (ImmutableString, ImmutableString) {
+	return "first", "second"
+}
+
+func TestMultipleReturns(imm *Imm, i int) {
+	if imm.x == 0 && i == 0 {
+		imm, i = multi()
+		_, _ = i, imm
+		imm.x = 10 // CATCH - mutating the struct's field
+		i = 20     // OK - reassigning the int variable
+	}
+
+	foo, bar := multiStr()
+	_, _ = foo, bar
+	foo = "changed" // CATCH - mutating the ImmutableString
 }
