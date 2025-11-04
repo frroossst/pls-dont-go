@@ -538,7 +538,23 @@ func checkAssignmentWithCopiesAndAliases(ctx *analysisCtx, stmt *ast.AssignStmt)
 			// 1. im = Immtbl{} (reassigning whole immutable - should CATCH)
 			// 2. result = &im (assigning pointer - should NOT catch, it's read-only yet)
 			// 3. val = mapOfImmutables["key"] (assigning copy - should also NOT catch)
+			// 4. imm, i = multi() (multi-value assignment - should NOT catch)
 			if isImmutableVariable(ctx.pass, ident, ctx.immutableTypes, ctx.varToTypeAlias) {
+				// check if this is a multi-value assignment from a single expression
+				// e.g., imm, i = multi() where multi() returns (*Imm, int)
+				if len(stmt.Rhs) == 1 && len(stmt.Lhs) > 1 {
+					// get the type of the single RHS expression
+					rhsType := ctx.pass.TypesInfo.TypeOf(stmt.Rhs[0])
+					if rhsType != nil {
+						// if it's a tuple type, this is a multi-value return
+						if tuple, ok := rhsType.(*types.Tuple); ok && tuple.Len() > 1 {
+							// this is a legitimate multi-value assignment from function return
+							// allow it as it's the same as reassigning from a function
+							continue
+						}
+					}
+				}
+
 				// check RHS - if it's just taking address, don't flag (read-only operation)
 				if i < len(stmt.Rhs) {
 					rhs := stmt.Rhs[i]
@@ -547,6 +563,7 @@ func checkAssignmentWithCopiesAndAliases(ctx *analysisCtx, stmt *ast.AssignStmt)
 						continue
 					}
 				}
+
 				// this is reassigning the whole immutable struct - flag it
 				reportMutation(ctx.pass, stmt.Pos(), ident.Name, lhs, ctx.immutableTypes, "reassigning whole immutable struct")
 			}
