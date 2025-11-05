@@ -1,9 +1,16 @@
 .PHONY: all build clean test test-advanced test-manual test-runner help run plugin lint ensure-golangci custom-gcl
 
-LATEST_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || git tag --sort=-creatordate | head -n1)
-RAW_VER := $(shell if [ -n "$(LATEST_TAG)" ]; then echo "$(LATEST_TAG)" | sed -E 's/^v?(.+)/\1/'; else echo "0.0.0"; fi)
+LATEST_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+RAW_VER := $(shell echo "$(LATEST_TAG)" | sed -E 's/^v?(.+)/\1/')
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION := adhyan-dev-v$(RAW_VER)
-LDFLAGS := -X main.version=$(VERSION)
+
+PACKAGE := github.com/frroossst/pls-dont-go/cmd/immutablelint
+
+LDFLAGS := -X '$(PACKAGE).version=$(VERSION)' \
+           -X '$(PACKAGE).commit=$(GIT_COMMIT)' \
+           -X '$(PACKAGE).buildDate=$(BUILD_DATE)'
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -22,8 +29,8 @@ tag: ## ask user for a new tag and push it
 	git tag -a "v$$newtag" -m "v$$newtag"; \
 	git push origin "v$$newtag"
 
-install: ## Install from source
-	go install github.com/frroossst/pls-dont-go/cmd/immutablelint@latest
+install: ## Install from source with version info
+	go install -ldflags "$(LDFLAGS)" ./cmd/immutablelint
 
 run: build ## Runs linter with examples/all.go
 	./immutablelint examples/all.go

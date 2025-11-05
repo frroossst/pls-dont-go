@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/frroossst/pls-dont-go/immutablecheck"
@@ -10,14 +11,18 @@ import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
-// set by -ldflags "-X main.version=..."
-var version = "adhyan-dev-v<unset>"
+// These will be set by ldflags during build
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
 
 func main() {
-	// quick-and-dirty: if -V or -V=* seen, print version and exit
+	// quick-and-dirty: if -V or -V=* or --version seen, print version and exit
 	for _, a := range os.Args[1:] {
 		if a == "-V" || strings.HasPrefix(a, "-V=") || a == "--version" {
-			fmt.Println(version)
+			printVersion()
 			os.Exit(0)
 		}
 	}
@@ -37,4 +42,30 @@ func main() {
 	immutablecheck.SetLogDestination(logDest)
 
 	singlechecker.Main(immutablecheck.Analyzer)
+}
+
+func printVersion() {
+	fmt.Printf("immutablelint %s\n", getVersion())
+	if commit != "unknown" {
+		fmt.Printf("  commit: %s\n", commit)
+	}
+	if buildDate != "unknown" {
+		fmt.Printf("  built:  %s\n", buildDate)
+	}
+}
+
+func getVersion() string {
+	// If version was set via ldflags (local build with make)
+	if version != "dev" {
+		return version
+	}
+
+	// Try to get version from Go module info (go install)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+	}
+
+	return "dev"
 }
