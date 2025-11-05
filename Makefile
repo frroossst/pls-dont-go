@@ -13,6 +13,7 @@ all: build
 tag: ## ask user for a new tag and push it
 	@echo "curr = $(RAW_VER)"
 	@echo "make sure to commit all changes before tagging!!!"
+	@git status
 	@read -p "Enter new tag (without 'v' prefix): " newtag; \
 	if [ -z "$$newtag" ]; then \
 		echo "No tag entered. Aborting."; \
@@ -20,6 +21,9 @@ tag: ## ask user for a new tag and push it
 	fi; \
 	git tag -a "v$$newtag" -m "v$$newtag"; \
 	git push origin "v$$newtag"
+
+install: ## Install from source
+	go install github.com/frroossst/pls-dont-go/cmd/immutablelint@latest
 
 run: build ## Runs linter with examples/all.go
 	./immutablelint examples/all.go
