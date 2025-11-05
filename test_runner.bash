@@ -1,4 +1,14 @@
-file="examples/all.go"
+#!/bin/bash
+
+# Usage: ./test_runner.bash [file]
+# Default to examples/all.go if no argument provided
+file="${1:-examples/all.go}"
+
+# Check if file exists
+if [ ! -f "$file" ]; then
+  echo "Error: File '$file' not found"
+  exit 1
+fi
 
 # Color codes
 GREEN='\033[0;32m'

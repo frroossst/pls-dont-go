@@ -535,23 +535,21 @@ func checkAssignmentWithCopiesAndAliases(ctx *analysisCtx, stmt *ast.AssignStmt)
 		if ident, ok := lhs.(*ast.Ident); ok {
 			// This is a simple variable assignment, not a field mutation
 			// We need to distinguish:
-			// 1. im = Immtbl{} (reassigning whole immutable - should CATCH)
-			// 2. result = &im (assigning pointer - should NOT catch, it's read-only yet)
+			// 1. im = Immtbl{} (reassigning whole immutable value - should CATCH)
+			// 2. imPtr = &im (assigning pointer - should NOT catch, it's read-only)
 			// 3. val = mapOfImmutables["key"] (assigning copy - should also NOT catch)
-			// 4. imm, i = multi() (multi-value assignment - should NOT catch)
+			// 4. imPtr, i = multi() where imPtr is *Imm (multi-value with pointer - should NOT catch)
+			// 5. t, y = m() where t is im value type (multi-value with value - should CATCH)
 			if isImmutableVariable(ctx.pass, ident, ctx.immutableTypes, ctx.varToTypeAlias) {
-				// check if this is a multi-value assignment from a single expression
-				// e.g., imm, i = multi() where multi() returns (*Imm, int)
-				if len(stmt.Rhs) == 1 && len(stmt.Lhs) > 1 {
-					// get the type of the single RHS expression
-					rhsType := ctx.pass.TypesInfo.TypeOf(stmt.Rhs[0])
-					if rhsType != nil {
-						// if it's a tuple type, this is a multi-value return
-						if tuple, ok := rhsType.(*types.Tuple); ok && tuple.Len() > 1 {
-							// this is a legitimate multi-value assignment from function return
-							// allow it as it's the same as reassigning from a function
-							continue
-						}
+				// Check if the variable is a pointer type
+				// If it's a pointer to an immutable type, reassigning the pointer is OK
+				// Only catch reassignment of immutable VALUES
+				obj := ctx.pass.TypesInfo.ObjectOf(ident)
+				if obj != nil {
+					if _, isPtr := obj.Type().(*types.Pointer); isPtr {
+						// This is reassigning a pointer variable - allow it
+						// This handles both single and multi-value assignments
+						continue
 					}
 				}
 

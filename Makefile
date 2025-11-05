@@ -39,7 +39,10 @@ build: ## Build the immutable linter
 	go build -ldflags "$(LDFLAGS)" -o immutablelint ./cmd/immutablelint
 
 test: build ## Run linter tests against example files
-	./test_runner.bash
+	./test_runner.bash examples/all.go
+
+regress: build ## Run regression tests against examples/regression.go
+	./test_runner.bash examples/regression.go
 
 plugin: ## Build a golangci-lint compatible plugin
 	go build -buildmode=plugin -o immutablecheck.so ./plugin/plugin.go
