@@ -40,6 +40,7 @@ build: ## Build the immutable linter
 
 test: build ## Run linter tests against example files
 	./test_runner.bash examples/all.go
+	make regress
 
 regress: build ## Run regression tests against examples/regression.go
 	./test_runner.bash examples/regression.go
