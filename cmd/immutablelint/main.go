@@ -27,6 +27,9 @@ func main() {
 		}
 	}
 
+	// print version anywasy (easier for debugging)
+	fmt.Printf("%s\n", getVersion())
+
 	// Parse the --log flag before singlechecker processes the args
 	var logDest string
 	for i, arg := range os.Args[1:] {
