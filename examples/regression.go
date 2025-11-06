@@ -29,9 +29,12 @@ func T1() (int, int, int) {
 	t := im{}
 	_ = t
 	t = single() // CATCH - reassignment
+	t = single() // @allow-mutate
 	_ = t
 	t, x = im{}, 1 // CATCH - reassignment
+	t, x = im{}, 1 // @allow-mutate
 	_ = t
 	t, y = m0() // CATCH - multiple reassignment
+	t, y = m0() // @allow-mutate
 	return t.x, x, y
 }
