@@ -5,9 +5,12 @@ git clone https://github.com/frroossst/pls-dont-go.git && cd pls-dont-go
 make help
 ```
 
+---
+
+
 `make build` to build a immutablelint binary in the current folder.
 
-enable logging by remove the early return in `immutablecheck/logger.go:38` and recompile using `make build`.
+enable logging by `immutablelint --log=stderr` to print to stderr or `immutablelint --log=myFile.log` to log to a file
 
 `make test` to run tests. Change `examples/all.go` to add more test cases.
 
