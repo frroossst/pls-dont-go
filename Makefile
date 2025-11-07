@@ -49,7 +49,7 @@ plugin: ## Build a golangci-lint compatible plugin
 	go build -buildmode=plugin -o immutablecheck.so ./plugin/plugin.go
 
 clean: ## Clean build artifacts
-	rm -rf ./immutablelint ./pls-dont-go ./immutablecheck.so ./custom-gcl
+	rm -rf ./immutablelint ./custom-gcl
 
 ensure-golangci: ## Install golangci-lint if missing
 	@command -v golangci-lint >/dev/null 2>&1 || { \
