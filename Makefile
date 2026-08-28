@@ -39,7 +39,7 @@ build: ## Build the immutable linter
 	go build -ldflags "$(LDFLAGS)" -o immutablelint ./cmd/immutablelint
 
 test: build ## Run linter tests against example files
-	./test_runner.bash examples/all.go
+	bash test_runner.bash examples/all.go
 	make regress
 
 regress: build ## Run regression tests against examples/regression.go
@@ -53,8 +53,8 @@ clean: ## Clean build artifacts
 
 ensure-golangci: ## Install golangci-lint if missing
 	@command -v golangci-lint >/dev/null 2>&1 || { \
-		echo "Installing golangci-lint v2.5.0..."; \
-		GO111MODULE=on go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0; \
+		echo "Installing golangci-lint ..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
 	}
 
 custom-gcl: ensure-golangci .custom-gcl.yml ## Build the custom golangci-lint binary

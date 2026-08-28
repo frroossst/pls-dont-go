@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Usage: ./test_runner.bash [file]
 # Default to examples/all.go if no argument provided
 file="${1:-examples/all.go}"

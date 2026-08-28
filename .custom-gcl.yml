@@ -1,4 +1,4 @@
-version: v2.5.0
+version: v2.13.2
 plugins:
     - module: "github.com/frroossst/pls-dont-go"
       path: .
