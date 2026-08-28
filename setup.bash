@@ -17,7 +17,7 @@ EOF
 
 
 cat << 'EOF' > .custom-gcl.yml
-version: v2.5.0
+version: v2.9.0
 plugins:
     - module: "github.com/frroossst/pls-dont-go"
       path: .
@@ -25,8 +25,8 @@ plugins:
 EOF
 
 command -v golangci-lint >/dev/null 2>&1 || { \
-	echo "Installing golangci-lint v2.5.0..."; \
-	GO111MODULE=on go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.5.0; \
+	echo "Installing golangci-lint v2.9.0..."; \
+	GO111MODULE=on go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.9.0; \
 }
 
 golangci-lint custom -v
