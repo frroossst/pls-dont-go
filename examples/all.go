@@ -602,3 +602,38 @@ func TestMultipleReturns(imm *Imm, i int) {
 	_, _ = foo, bar
 	foo = "changed" // CATCH - mutating the ImmutableString
 }
+
+// @immutable
+type Top struct {
+	Value string
+	Count int
+}
+
+// @immutable
+type topPriv struct {
+	value string
+}
+
+func TestFillContainersOfImmutables() {
+	nTop := 3
+
+	top := make([]Top, nTop)
+	for i := range nTop {
+		top[i] = Top{Value: "v", Count: i} // OK
+	}
+
+	top2 := make([]Top, 0, nTop)
+	for range nTop {
+		top2 = append(top2, Top{Value: "w"}) // OK
+	}
+
+	m := map[string]Top{}
+	m["a"] = Top{Value: "x"} // OK
+
+	ps := make([]topPriv, 2)
+	ps[0] = topPriv{value: "p"} // OK
+
+	top[0].Count = 5  // CATCH
+	ps[1].value = "q" // CATCH
+	_, _ = top2, m
+}

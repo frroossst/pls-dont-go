@@ -693,13 +693,6 @@ func isImmutableMutationWithAliases(pass *analysis.Pass, expr ast.Expr, immutabl
 		}
 
 	case *ast.IndexExpr:
-		// Check if we're indexing into an immutable array/slice/map
-		// Handle: arr[0].Num or mapOfImmutablePtrs["key"].Num
-		indexedType := pass.TypesInfo.TypeOf(e)
-		if indexedType != nil && isImmutableType(indexedType, immutableTypes) {
-			return true
-		}
-		// Also check the container itself (strip parens first)
 		return isImmutableMutationWithAliases(pass, stripParens(e.X), immutableTypes, aliasToImmutableField, varToTypeAlias)
 
 	case *ast.StarExpr:
